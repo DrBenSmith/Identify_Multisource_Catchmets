@@ -9,7 +9,9 @@
 .Ruserdata
 
 # Example code in package build process
-*-Ex.R
+/Interpolated Data/*
+/Low Flow Objects/*
+/Peak hydrographs.pdf
 
 # Output files from R CMD build
 /*.tar.gz
