@@ -1,7 +1,24 @@
+#-------------------------------------------------------------------------------#-------------------------------------------------------------------------------
 # Create Multisource Indexes from Flow Records
 # 20/02/2021
+#
+#-------------------------------------------------------------------------------
+# This is the master script for calculating indexes for the paper. This script 
+# will run through all of the flow records, individually analysing all records.
+#
+# 23/06/22: 
+#   > Changed method for producing SWI as I think these do not work.
+#
+# TODO:
+#   > 
+#
+#-------------------------------------------------------------------------------
+#-------------------------------------------------------------------------------
 
-# This script will run through all of the records, individually analysing all records.
+
+
+
+
 
 # -----------------
 
@@ -16,10 +33,10 @@ plot_event = FALSE
 #                         stringsAsFactors = F,
 #                         sep = ",", skip = 4)
 
-data_to_use <- data.frame("files" = c(list.files("../Data/NRFA River Flow Data/",full.names = TRUE),
-                                      list.files("../Data/EA_Data_Request/",full.names = TRUE)),
-                          "gauge_id" = c(list.files("../Data/NRFA River Flow Data/",full.names = FALSE),
-                                         list.files("../Data/EA_Data_Request/",full.names = FALSE)))
+data_to_use <- data.frame("files" = c(list.files("../Data/NRFA River Flow Data/", full.names = TRUE, pattern = ".csv"),
+                                      list.files("../Data/EA_Data_Request/",      full.names = TRUE, pattern = ".csv")),
+                          "gauge_id" = c(list.files("../Data/NRFA River Flow Data/", full.names = FALSE, pattern = ".csv"),
+                                         list.files("../Data/EA_Data_Request/", full.names = FALSE, pattern = ".csv")))
 
 data_to_use$gauge_id = substr(x = data_to_use$gauge_id, start = 1, stop = nchar(data_to_use$gauge_id)-4)
 
@@ -29,14 +46,17 @@ data_to_use$gauge_id = substr(x = data_to_use$gauge_id, start = 1, stop = nchar(
 # install.packages("lfstat")
 # install.packages("foreign")
 # install.packages("plotly")
-# install.packages(openxlsx)
+# install.packages("openxlsx")
 
-library(zoo)
+# library(zoo)
 library(xts)
-library(lfstat)
-library(foreign)
+# library(lfstat)
+# library(foreign)
 library(plotly)
 library(openxlsx)
+
+# Import the funciton for calculating base level:
+source('https://raw.github.com/TonyLadson/BaseflowSeparation_LyneHollick/master/BFI.R')
 
 # -----------------
 
@@ -44,9 +64,6 @@ library(openxlsx)
 num_runs <- length(data_to_use$gauge_id)
 
 # -----------------
-
-# Import the funciton for calculating base level:
-source('https://raw.github.com/TonyLadson/BaseflowSeparation_LyneHollick/master/BFI.R')
 
 # Setup data.frame to receive averaged source data
 source_dat <- data.frame("gauge"   = character(length = num_runs),
@@ -60,7 +77,7 @@ rownames(event_gwi) = data_to_use$gauge_id
 colnames(event_gwi) <- paste0("event_", 1:10)
                                       
 # Setup data.frame to receive event quick level data
-event_swi <- event_gwi
+event_swi <- event_swi_sum2 <- event_swi_Qmax2 <- event_gwi
                                       
 # Setup data.frame to receive event duration data and record lengths
 event_durations <- event_gwi
@@ -118,7 +135,7 @@ short_pre_event = 4*12 # 12 hours
 # difficult records for testing: 351/368/584 
 
 # Initiate for-loop that will run through each record:
-for(x in (368:num_runs)){ # num_runs
+for(x in 1:num_runs){
   
   # ----------------------------------
   # >> Section 1 - Prepare the data <<
@@ -154,18 +171,17 @@ for(x in (368:num_runs)){ # num_runs
     
     # Convert characters dates into POSTIXct:
     gauge_data$Date <- as.POSIXct(gauge_data$Date, format="%d/%m/%Y %H:%M:%S", tz = "UTC")
+    
+    # Remove the empty cells (these are rows that have comments in them but now values).
+    gauge_data <- gauge_data[which(!is.na(gauge_data$Date)),]
+    
   }
   
   # --------------------------------------------------------------------------
   # >> Section 2 - Base Levels <<
   #
-  # Calculate base level indexes for each gauge. Display these in a table.
-  # This simply produces the lowflow objects (calculates base level).
+  # Calculate base level indexes for each gauge.
   # --------------------------------------------------------------------------
-
-  #---------------------------------------
-  # Calculate Base levels using WMO Method
-  #---------------------------------------
   
   # -----------------------
   # Create daily data
@@ -228,15 +244,18 @@ for(x in (368:num_runs)){ # num_runs
   if(length(index)<10){print(paste0("WARNING - only ", length(index), " events!!!!"))}
   
   # Set up dataframe to store values ready for averaging:
-  ratios = data.frame("swf" = rep(NA, 10),
+  ratios = data.frame("swf_sum" = rep(NA, 10),
+                      "swf_sum2" = rep(NA, 10),
+                      "swf_Qmax2" = rep(NA, 10),
                       "bf" = rep(NA, 10),
                       "duration" = rep(NA, 10),
+                      "peak_date" = rep(NA, 10),
                       "event_no" = rep(NA, 10))
   
   
   # Fill 10 events of data:
   counter = 1
-  while(is.na(ratios$swf[10])){
+  while(is.na(ratios$swf_sum[10])){
   
     # Determine start of peak event:
     start = index[counter] - pre_event
@@ -277,10 +296,14 @@ for(x in (368:num_runs)){ # num_runs
       }
   
     # Calculate the surface water index:
-    SWI = max(runoff,na.rm = TRUE) / mean(runoff, na.rm = TRUE)
-    # max(runoff) / (mean(runoff, na.rm = TRUE) * length(runoff)*15*60)
+    SWI_sum   <- max(runoff,na.rm = TRUE) / sum(runoff, na.rm = TRUE) # simple sum, does not distinguish between scaled events
+    SWI_sum2  <- max(runoff,na.rm = TRUE) / (sum(runoff, na.rm = TRUE)^2) # bias towards length
+    SWI_Qmax2 <- max(runoff,na.rm = TRUE)^2 / sum(runoff, na.rm = TRUE) # bias towards peaks
+    # max(runoff) /  mean(runoff, na.rm = TRUE)
+    # max(runoff) / (mean(runoff, na.rm = TRUE) * length(runoff)*15*60) # I think this is the same as below.
     # max(runoff) / sum(runoff, na.rm = TRUE)
-    # All three of these calculate similar / proportional ratios. Top is the nicest number. 
+    # All three of these calculate similarish things. Some of these are flawed, check the excel document for examples of why:
+    # ".\Identify_Multisource_Catchmets\Testing Example SWI methods.xlsx"
     
     # -----    
     
@@ -291,9 +314,12 @@ for(x in (368:num_runs)){ # num_runs
     GWI = GWI / max(gauge_data$Flow[index[counter]], na.rm = TRUE)
     
     # Record the Event Statistics --------------------------------------------
-    ratios[min(which(is.na(ratios$swf))),] = c(SWI, # Instances of Rapid Rise
+    ratios[min(which(is.na(ratios$swf_sum))),] = c(SWI_sum, # Instances of Rapid Rise
+                                               SWI_sum2, # Instances of Rapid Rise
+                                               SWI_Qmax2, # Instances of Rapid Rise
                                                GWI, # The highest base flow / highest river flow
                                                length(pk)/24, # length of the event in hrs
+                                               index[counter],
                                                counter)
     
     counter = counter+1
@@ -315,8 +341,11 @@ for(x in (368:num_runs)){ # num_runs
   
   r = which(rownames(event_gwi)==gauge_name)
   event_gwi[r,] = ratios$bf
-  event_swi[r,] = ratios$swf
+  event_swi[r,] = ratios$swf_sum
+  event_swi_sum2[r,] = ratios$swf_sum2
+  event_swi_Qmax2[r,] = ratios$swf_Qmax2
   event_durations[r,] = ratios$duration
+  event_date[r,] = ratios$date
   event_no[r,] = ratios$event_no
   event_ARI[r,] = round(length(which(!is.na(gauge_data$Flow)))/(4*24*365) / ratios$event_no, 2)
   
@@ -324,13 +353,15 @@ for(x in (368:num_runs)){ # num_runs
 # And Finally -------------------------------------------------------------
 
   # Display progress bar
-  setTxtProgressBar(pb, x,)
+  setTxtProgressBar(pb, x)
   
 }
 
 
 source_dat = data.frame("GWI" = rowMeans(event_gwi, na.rm = TRUE),
-                        "SWI" = rowMeans(event_swi, na.rm = TRUE))
+                        "SWI" = rowMeans(event_swi, na.rm = TRUE),
+                        "SWIQmax" = rowMeans(event_swi_Qmax2, na.rm = TRUE),
+                        "SWI_sum2" = rowMeans(event_swi_sum2, na.rm = TRUE))
 
 # Clean the Workspace
 # rm(bli_wmo, data_to_use, runs, BL, consec_ends, consec_runs, date, days, end, ends, ends_j, filepath, files_in_directory,pre_event, gauge_data, gauge_name, GWI, SWI, high_rl, index, k, lf_data, lf_name, lyne_hollick, missing, NA_Bls, newindex, no.events, no.pks, normalised, num_runs, pb, prop_rise, swf_threshold, Qt.ft, Qt.st, Qt.svt, ratios, RL, run, flow_threshold, start, starts, starts_j, post_event, tot, z)
@@ -341,9 +372,13 @@ source_dat = data.frame("GWI" = rowMeans(event_gwi, na.rm = TRUE),
 write.xlsx(x = list("Indexes" = source_dat,
                     "GWI" = event_gwi,
                     "SWI" = event_swi,
+                    "SWI_sum2" = event_swi_sum2,
+                    "SWI_Qmax2" = event_swi_Qmax2,
                     "Durations" = event_durations,
-                    "Event ranks" = event_no),
-           file = "Indexes.xlsx", rowNames = TRUE)
+                    "Peak_Date" = event_date,
+                    "Event ranks" = event_no,
+                    "Event ARIs" = event_ARI),
+           file = "Indexes_24June2022.xlsx", rowNames = TRUE)
 
 # Close the PDF
 # dev.off()
@@ -354,3 +389,12 @@ close(pb)
 # TODO
 # A sensible check is to ensure that the event numbers used are sensible. You should also check the event ARIs. Check these and remove all those that are 'too low'.
 # You should then also remove the low ARI events. But! You need to check whether there is correlation between event number and stats so that this does not bias the records.
+# Add a list of lists that extracts the flow data so that this can be loaded instead of having to reload each record. Save as an R object? 
+
+
+# Data Checks -------------------------------------------------------------
+
+summary(event_ARI)
+
+event_ARI[which(is.na(event_ARI)),]
+which(is.na(data_to_use$gauge_id))

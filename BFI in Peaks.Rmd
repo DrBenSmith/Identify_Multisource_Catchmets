@@ -1,0 +1,131 @@
+---
+title: "BFI vs BFI in peaks"
+author: "Ben Smith"
+date: "21/06/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+
+```{r add_libraries, echo=FALSE}
+# install.packages("dplyr")
+# install.packages("plotly")
+library(dplyr)
+library(plotly)
+```
+
+
+```{r load_data, echo=FALSE}
+# Load excel
+quants = read.csv("../PhD Outputs/Quantiles - Groundwater - Mean Baseflow.csv")
+quants$nrfa_id = quants$gauge
+
+event_bfi = read.csv("../PhD Outputs/Event_Base_Flows.csv", na.strings = "NA")
+event_bfi$nrfa_id = as.integer(substr(event_bfi$gauge, 5, nchar(event_bfi$gauge)))
+event_bfi[,3:11] <- apply(X = event_bfi[,3:11], MARGIN = 2, FUN = function(x) as.numeric(as.character(x)))
+
+# Load catchment descriptors
+cats = read.csv("../IMS Results - Flows and NRFA Station data.csv", check.names = FALSE)
+
+master = cats[,c("nrfa_id", "Base Flow Index")] %>% 
+  inner_join(event_bfi[,3:12], by = "nrfa_id") %>% 
+  inner_join(quants[,3:8], by = "nrfa_id")
+
+```
+
+## Plotting baseflow and related statistics 
+
+First, plot the baseflow indexes of the peak events, ordering the plot by the BFI of the catchment.
+```{r}
+fig_peaks <- plot_ly()
+for(k in 1:nrow(master)) {
+   
+  fig_peaks <- add_trace(fig_peaks, 
+                 x= rep(master[k, "Base Flow Index"], 9), 
+                 y= unlist(master[k,3:11]), 
+                 opacity = 0.3,
+                 # color = master[k,"Base Flow Index"],
+                 type="scatter", mode="lines+markers", name = master[k,"nrfa_id"]
+                 )
+}
+
+fig_peaks = fig_peaks %>% layout(title = "The Relationship Between BFI and BFI in Peak Events",
+                 xaxis = list(title = "Catchment Base FLow Index (BFI)", range = c(0,1)),
+                 yaxis = list(title = "Maximum BFI in Peak Flow Events", range = c(0,1)),
+                 legend = list(title = "Catchment ID"))
+fig_peaks 
+
+```
+
+Plot the baseflow indexes for the flow quantiles I think hat these have been calculated by taking the flow quantiles, splitting them into 20s, then taking the average BFI of the flows within that quantile. I do not know whether 0-20 is the highest or lowest flows...
+
+```{r}
+fig_quant <- plot_ly()
+for(k in 1:nrow(master)) {
+   
+  fig_quant <- add_trace(fig_quant, 
+                 x= c(10,30,50,70,90), 
+                 y= unlist(master[k,12:16]), 
+                 opacity = master[k,16]/3,
+                 # color = master[k,"Base Flow Index"],
+                 type="scatter", mode="lines", name = master[k,"nrfa_id"]
+                 )
+}
+
+fig_quant = fig_quant %>% layout(title = "Average BFI per 20% Flow Quantile",
+                 xaxis = list(title = "Flow Quantile", range = c(0,100)),
+                 yaxis = list(title = "Average BFI per 20% Quantile", range = c(0,1)),
+                 legend = list(title = "Catchment ID"))
+fig_quant
+```
+
+Does the event BFI correlate with the quantile BFI? 
+```{r}
+plot_ly(data = master, x = ~event_1, y = ~Qt_100, color = ~`Base Flow Index`,
+        type="scatter", mode="markers") %>%
+  layout(xaxis=list(title="Baseflow Index in Peak Event", range=c(0,1)),
+        yaxis=list(title="Mean Baseflow Index in Q20-Q0", range=c(0,1)))
+```
+
+Does the overall BFI correlate with the quantile BFI? 
+```{r}
+plot_ly(data = master, x = ~`Base Flow Index`, y = ~Qt_100,
+        type="scatter", mode="markers") %>%
+  layout(xaxis=list(title="Baseflow Index", range=c(0,1)),
+        yaxis=list(title="Mean Baseflow Index in Q20-Q0", range=c(0,1)))
+```
+
+
+Does the overall BFI correlate with the BFI in the peak event? (This is similar to the first plot).
+```{r}
+peak_events <- plot_ly()
+
+for(k in 1:9) {
+  
+  Ev = colnames(master)[k+2]
+   
+  peak_events <- add_trace(peak_events,
+                           x = master[,"Base Flow Index"],
+                           y = master[,Ev],
+                           type="scatter", mode="markers", 
+                           opacity = 0.6,
+                           name = paste0("Event ", substr(Ev, nchar(Ev), nchar(Ev)))
+                           )
+}
+
+peak_events = peak_events %>% 
+  layout(xaxis=list(title="Baseflow Index", range=c(0,1)), 
+         yaxis=list(title="BFI in peak event", range=c(0,1)))
+
+peak_events
+```
+
+
+So, it seems that there is a good correlation between the BFI and the BFI quantile and the BFI of peak events. The correlation analysis that I did suggests that there is higher correlation between the high quantiles and the BFI than with the low quantiles. These points suggest that the use of this statistic for identifying floods is less justified and that instead, BFI may actually do the job. I think that this is because the base flow indexes are almost always high in low flow events, and therefore have a greater correlation to the high flows as this is the main time when the baseflow indexes are changing. It is perhaps more interesting to say that there is a missmatch between the low flows and the BFIs.
+
+**But**, is that correct...?
+
+Would it also be interesting to take the events and their individual scores, to convert events into QXXX and to plot those as true where there is a MS event detected? Also marking on the length of the record.
